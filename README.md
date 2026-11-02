@@ -20,6 +20,8 @@ Kişisel kilo ve beslenme takibi için Android uygulaması. Proje Jetpack Compos
 
 73,0 kg hedefi ile 90 günlük öncelikli dönem uygulamada korunur. Süre, hedefe ulaşıldığı garantisi değildir; 90. günde hedef ortalaması görülmezse takip devam eder.
 
+V2 önerileri, V3 ürün kapsamı ve aşamalı yol haritası için [`ROADMAP.md`](ROADMAP.md) dosyasına bak.
+
 ## Derleme
 
 Android Studio ile klasörü açabilir veya Windows'ta şu komutu çalıştırabilirsin:
