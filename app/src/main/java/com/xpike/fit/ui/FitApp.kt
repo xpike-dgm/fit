@@ -65,6 +65,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -88,6 +89,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -107,6 +109,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.time.Instant
@@ -199,6 +202,93 @@ fun FitApp() {
     }
     var currentWeight by rememberSaveable { mutableStateOf(weights.lastOrNull()?.weight ?: 61f) }
     val photos = remember { mutableStateListOf<Uri>().apply { addAll(store.loadPhotos()) } }
+    val updater = remember(context) { FitUpdater(context) }
+    val updateScope = rememberCoroutineScope()
+    var updateMessage by rememberSaveable { mutableStateOf("Güncelleme kontrol edilmedi.") }
+    var availableUpdate by remember { mutableStateOf<FitUpdateInfo?>(null) }
+    var isCheckingUpdate by remember { mutableStateOf(false) }
+    var isDownloadingUpdate by remember { mutableStateOf(false) }
+    var updateDownloadProgress by remember { mutableIntStateOf(0) }
+    var pendingUpdatePermission by remember { mutableStateOf<FitUpdateInfo?>(null) }
+
+    val downloadAndInstall: (FitUpdateInfo) -> Unit = { update ->
+        if (!isDownloadingUpdate) {
+            updateScope.launch {
+                isDownloadingUpdate = true
+                updateDownloadProgress = 0
+                updateMessage = "Güncelleme indiriliyor…"
+                try {
+                    val apk = updater.downloadApk(update) { progress ->
+                        withContext(Dispatchers.Main) { updateDownloadProgress = progress }
+                    }
+                    updateMessage = "İndirme tamamlandı · Android yükleme onayı bekleniyor."
+                    context.startActivity(updater.installerIntent(apk))
+                } catch (error: Exception) {
+                    updateMessage = "Güncelleme indirilemedi. İnternet bağlantını kontrol edip yeniden dene."
+                } finally {
+                    isDownloadingUpdate = false
+                }
+            }
+        }
+    }
+    val installPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult(),
+    ) {
+        val pending = pendingUpdatePermission
+        pendingUpdatePermission = null
+        if (pending != null) {
+            if (updater.canRequestPackageInstalls()) {
+                downloadAndInstall(pending)
+            } else {
+                updateMessage = "Güncellemek için Android ayarlarında Fit'in uygulama yüklemesine izin ver."
+            }
+        }
+    }
+    val beginUpdateInstall: (FitUpdateInfo) -> Unit = { update ->
+        if (updater.canRequestPackageInstalls()) {
+            downloadAndInstall(update)
+        } else {
+            pendingUpdatePermission = update
+            updateMessage = "Fit için uygulama yükleme izni Android ayarlarında açılmalı."
+            runCatching {
+                installPermissionLauncher.launch(updater.unknownSourcesSettingsIntent())
+            }.onFailure {
+                pendingUpdatePermission = null
+                updateMessage = "Android uygulama yükleme ayarları açılamadı."
+            }
+        }
+    }
+    val checkForUpdate: () -> Unit = {
+        if (!isCheckingUpdate && !isDownloadingUpdate) {
+            updateScope.launch {
+                isCheckingUpdate = true
+                availableUpdate = null
+                updateMessage = "Güncellemeler kontrol ediliyor…"
+                try {
+                    when (val result = updater.checkForUpdate()) {
+                        is FitUpdateCheckResult.Available -> {
+                            availableUpdate = result.update
+                            updateMessage = "${result.update.versionName} sürümü indirilmeye hazır."
+                        }
+                        is FitUpdateCheckResult.UpToDate -> {
+                            updateMessage = "Uygulama güncel · ${result.latestVersion}"
+                        }
+                        FitUpdateCheckResult.NoRelease -> {
+                            updateMessage = "Henüz yayınlanmış bir güncelleme yok."
+                        }
+                    }
+                    updater.markChecked()
+                } catch (error: Exception) {
+                    updateMessage = "Güncelleme kontrol edilemedi. Bağlantını kontrol edip yeniden dene."
+                } finally {
+                    isCheckingUpdate = false
+                }
+            }
+        }
+    }
+    LaunchedEffect(updater) {
+        if (updater.shouldCheckAutomatically()) checkForUpdate()
+    }
 
     val photoPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia(),
@@ -339,6 +429,14 @@ fun FitApp() {
                         planStartDate = date
                         store.savePlanStartDate(date)
                     },
+                    currentVersion = updater.currentVersionName(),
+                    updateMessage = updateMessage,
+                    availableUpdate = availableUpdate,
+                    isCheckingUpdate = isCheckingUpdate,
+                    isDownloadingUpdate = isDownloadingUpdate,
+                    downloadProgress = updateDownloadProgress,
+                    onCheckForUpdate = checkForUpdate,
+                    onInstallUpdate = beginUpdateInstall,
                 )
             }
         }
@@ -1197,6 +1295,14 @@ private fun ProfileScreen(
     targets: DailyTargets,
     planStartDate: LocalDate,
     onPlanStartDateChange: (LocalDate) -> Unit,
+    currentVersion: String,
+    updateMessage: String,
+    availableUpdate: FitUpdateInfo?,
+    isCheckingUpdate: Boolean,
+    isDownloadingUpdate: Boolean,
+    downloadProgress: Int,
+    onCheckForUpdate: () -> Unit,
+    onInstallUpdate: (FitUpdateInfo) -> Unit,
 ) {
     LazyColumn(
         modifier = modifier,
@@ -1283,6 +1389,49 @@ private fun ProfileScreen(
                     onDismiss = { showPlanDatePicker = false },
                     onSelect = { onPlanStartDateChange(it); showPlanDatePicker = false },
                 )
+            }
+        }
+        item {
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(22.dp)) {
+                Column(modifier = Modifier.fillMaxWidth().padding(18.dp)) {
+                    Text("Uygulama güncellemesi", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text("Yüklü sürüm · $currentVersion", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 3.dp))
+                    Text(updateMessage, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 10.dp))
+                    if (isDownloadingUpdate) {
+                        LinearProgressIndicator(
+                            progress = { downloadProgress / 100f },
+                            modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                        )
+                        Text("İndiriliyor · %$downloadProgress", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
+                    }
+                    availableUpdate?.let { update ->
+                        if (update.releaseNotes.isNotBlank()) {
+                            Text(update.releaseNotes, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
+                        }
+                    }
+                    Row(modifier = Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = onCheckForUpdate,
+                            enabled = !isCheckingUpdate && !isDownloadingUpdate,
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(14.dp),
+                        ) {
+                            if (isCheckingUpdate) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            } else {
+                                Text("Kontrol et")
+                            }
+                        }
+                        if (availableUpdate != null) {
+                            Button(
+                                onClick = { onInstallUpdate(availableUpdate) },
+                                enabled = !isDownloadingUpdate,
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(14.dp),
+                            ) { Text("Güncelle") }
+                        }
+                    }
+                }
             }
         }
         item {

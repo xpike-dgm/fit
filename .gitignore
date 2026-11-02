@@ -1,6 +1,8 @@
 *.iml
 .gradle/
 /local.properties
+fit-signing.properties
+/.secrets/
 /.idea/
 /build/
 /app/build/

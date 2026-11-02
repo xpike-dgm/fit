@@ -17,6 +17,7 @@ Kişisel kilo ve beslenme takibi için Android uygulaması. Proje Jetpack Compos
 - Eksik tüketim kaydını sıfır saymama ve kalori hedefi değerlendirmesini kayıt yeterliliğine bağlama
 - 14 günlük eğilim, haftalık tartı ortalaması ve koşullu hedef güncelleme akışı
 - İlerleme fotoğraflarını cihazın uygulama alanında saklama
+- GitHub Releases üzerinden sürüm kontrolü, SHA-256 doğrulaması ve Android sistem kurucusuyla uygulama içi güncelleme
 
 73,0 kg hedefi ile 90 günlük öncelikli dönem uygulamada korunur. Süre, hedefe ulaşıldığı garantisi değildir; 90. günde hedef ortalaması görülmezse takip devam eder.
 
@@ -31,6 +32,8 @@ Android Studio ile klasörü açabilir veya Windows'ta şu komutu çalıştırab
 ```
 
 Debug APK: `app\build\outputs\apk\debug\app-debug.apk`
+
+Uygulama içi GitHub Releases güncelleyicisinin imzalama ve yayınlama adımları için [`UPDATE-DISTRIBUTION.md`](UPDATE-DISTRIBUTION.md) dosyasına bak.
 
 Emülatöre veya Android cihaza yüklemek için:
 
